@@ -11,13 +11,14 @@ A browser-only citizen reporting demo for public infrastructure issues in Indian
 
 The demo seeds 15 sample reports and keeps reports, the anonymous handle, and interactions in this browser's `localStorage`. It does not use Firebase or a server, so the data is local to this browser/device.
 
-## Optional local Gemma via LM Studio
+## Local Gemma via LM Studio
 
 1. Load a Gemma model in LM Studio. Image classification needs a vision-capable model.
-2. Start LM Studio's local server on port `1234` and allow browser CORS requests in its server settings.
-3. The app checks the OpenAI-compatible `/v1/models` endpoint on `http://localhost:1234` and uses the first returned model ID.
+2. Start LM Studio's local server on port `1234` and enable CORS in its server settings.
+3. The app checks `http://localhost:1234/v1/models`, prefers `google/gemma-4-e2b` when available, and sends chat, vision, moderation, and report-writing requests to the OpenAI-compatible `/v1/chat/completions` endpoint.
+4. Click **Test Gemma** on the home page to send a real test prompt and see the model response.
 
-The page calls LM Studio directly from the browser for this local demo. This is suitable only for a browser on the same computer as LM Studio. Do not expose the LM Studio port to the public internet. If the server is unavailable, the UI shows mock/offline mode; mock analysis is not a real image assessment.
+The page calls LM Studio directly from the browser for this local demo. This is suitable only for a browser on the same computer as LM Studio. Do not expose the LM Studio port to the public internet. The demo does not invent a mock AI response when Gemma is unreachable or fails to understand the image; it reports the error instead. The model's visual assessment can still be wrong and should be reviewed by the citizen.
 
 ## Demo admin
 

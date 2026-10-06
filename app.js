@@ -61,7 +61,8 @@ const T = {
     status: 'स्थिति', admin: 'एडमिन', logout: 'लॉगआउट', updateStatus: 'स्थिति बदलें',
     citizenInitiative: 'यह एक नागरिक पहल है, सरकारी वेबसाइट नहीं',
     citizenInitiativeEn: 'This is a citizen initiative, NOT a government website',
-    gemmaOnline: 'Gemma AI ऑनलाइन', gemmaOffline: 'Gemma AI ऑफलाइन (मॉक मोड)',
+    gemmaOnline: 'Gemma AI ऑनलाइन', gemmaOffline: 'Gemma AI ऑफलाइन',
+    gemmaTest: 'Gemma जाँचें', gemmaTesting: 'Gemma से जवाब माँग रहे हैं...', gemmaTestOk: 'Gemma ने जवाब दिया',
     alreadyDone: 'आप पहले ही यह कर चुके हैं'
   },
   en: {
@@ -94,7 +95,8 @@ const T = {
     status: 'Status', admin: 'Admin', logout: 'Logout', updateStatus: 'Update Status',
     citizenInitiative: 'This is a citizen initiative, NOT a government website',
     citizenInitiativeEn: 'This is a citizen initiative, NOT a government website',
-    gemmaOnline: 'Gemma AI Online', gemmaOffline: 'Gemma AI Offline (Mock Mode)',
+    gemmaOnline: 'Gemma AI Online', gemmaOffline: 'Gemma AI Offline',
+    gemmaTest: 'Test Gemma', gemmaTesting: 'Waiting for Gemma reply...', gemmaTestOk: 'Gemma replied',
     alreadyDone: 'You already did this'
   }
 };
@@ -133,6 +135,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function setupEventListeners() {
   // Language toggle
   document.getElementById('lang-toggle').addEventListener('click', toggleLanguage);
+  document.getElementById('gemma-test-btn')?.addEventListener('click', testGemmaFromUI);
 
   // Bottom nav
   document.querySelectorAll('.nav-item').forEach(btn => {
@@ -725,16 +728,25 @@ async function runAIAnalysis() {
 
   try {
     aiAnalysis = await analyzeImage(imageBase64);
+    if (aiAnalysis?.is_infrastructure_issue === false) {
+      hideLoading();
+      showToast(currentLang === 'hi'
+        ? 'इस फोटो में सूची की समस्या साफ़ नहीं दिखी। कृपया समस्या की साफ़ फोटो लें।'
+        : 'No listed issue is clearly visible. Please retake a clear photo of the problem.');
+      goToReportStep(1);
+      return;
+    }
     const validTypes = Object.keys(REPORT_TYPES);
     const validSeverities = Object.keys(SEVERITY_CONFIG);
-    if (!validTypes.includes(aiAnalysis?.type) || !validSeverities.includes(aiAnalysis?.severity) ||
+    if (aiAnalysis?.is_infrastructure_issue !== true ||
+        !validTypes.includes(aiAnalysis?.type) || !validSeverities.includes(aiAnalysis?.severity) ||
         !aiAnalysis.description_hindi || !aiAnalysis.description_english) {
       throw new Error('AI returned incomplete or invalid issue data.');
     }
   } catch (error) {
     hideLoading();
     console.error('Issue analysis failed:', error);
-    showToast(currentLang === 'hi' ? 'फोटो का विश्लेषण नहीं हो सका' : 'Could not analyse this photo');
+    showToast(`${currentLang === 'hi' ? 'Gemma फोटो का विश्लेषण नहीं कर सका' : 'Gemma could not analyse the photo'}: ${error.message}`);
     goToReportStep(1);
     return;
   }
@@ -821,9 +833,24 @@ async function submitReport() {
 
   // If user edited, polish through Gemma
   if (description !== originalDesc) {
-    description = await polishDescription(description, originalDesc);
+    try {
+      description = await polishDescription(description, originalDesc);
+    } catch (error) {
+      hideLoading();
+      console.error('Gemma description polishing failed:', error);
+      showToast(`Gemma polish failed: ${error.message}`);
+      return;
+    }
   }
-  const moderation = await moderateComment(description);
+  let moderation;
+  try {
+    moderation = await moderateComment(description);
+  } catch (error) {
+    hideLoading();
+    console.error('Gemma moderation failed:', error);
+    showToast(`Gemma moderation failed: ${error.message}`);
+    return;
+  }
   description = moderation.cleanedText;
   if (!description.trim()) {
     hideLoading();
@@ -839,7 +866,15 @@ async function submitReport() {
   const reportAnalysis = { ...aiAnalysis };
   if (currentLang === 'hi') reportAnalysis.description_hindi = description;
   else reportAnalysis.description_english = description;
-  const reportText = await generateReportText(reportAnalysis, address, landmark, currentLang);
+  let reportText;
+  try {
+    reportText = await generateReportText(reportAnalysis, address, landmark, currentLang);
+  } catch (error) {
+    hideLoading();
+    console.error('Gemma report generation failed:', error);
+    showToast(`Gemma report generation failed: ${error.message}`);
+    return;
+  }
 
   // Determine authority
   const isVillage = address.toLowerCase().includes('village') || address.includes('गाँव') || address.includes('ग्राम');
@@ -1174,14 +1209,33 @@ function closeClaimProof() {
 
 // ── Gemma Status ─────────────────────────────────────────
 async function checkGemmaStatus() {
-  const available = await isGemmaAvailable();
+  const available = await refreshGemmaStatus();
   const el = document.getElementById('gemma-status');
   if (available) {
     el.className = 'gemma-status online';
-    el.innerHTML = `<span class="dot-indicator"></span> ${t('gemmaOnline')}`;
+    el.innerHTML = `<span class="dot-indicator"></span> ${t('gemmaOnline')} · ${escapeHTML(_gemmaModelId)}`;
   } else {
     el.className = 'gemma-status offline';
     el.innerHTML = `<span class="dot-indicator"></span> ${t('gemmaOffline')}`;
+    el.title = getGemmaConnectionError();
+  }
+}
+
+async function testGemmaFromUI() {
+  const button = document.getElementById('gemma-test-btn');
+  if (!button) return;
+  button.disabled = true;
+  button.textContent = t('gemmaTesting');
+  try {
+    const result = await testGemmaConnection();
+    showToast(`${t('gemmaTestOk')} (${result.model}): ${result.response}`);
+    await checkGemmaStatus();
+  } catch (error) {
+    console.error('Gemma connection test failed:', error);
+    showToast(`Gemma test failed: ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = t('gemmaTest');
   }
 }
 

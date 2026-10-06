@@ -37,6 +37,10 @@ function handleChatSend() {
   chatMessages.push({ role: 'user', content: text });
 
   showChatTyping();
+  const sendBtn = document.getElementById('chat-send-btn');
+  const micBtn = document.getElementById('chat-mic-btn');
+  sendBtn.disabled = true;
+  micBtn.disabled = true;
 
   const lang = localStorage.getItem('janawaaz_lang') || 'hi';
   chatbotResponse(chatMessages, lang).then(response => {
@@ -49,7 +53,23 @@ function handleChatSend() {
       const jsonMatch = response.match(/\{[\s\S]*"ready"\s*:\s*true[\s\S]*\}/);
       if (jsonMatch) {
         const data = JSON.parse(jsonMatch[0]);
-          chatReportDraft = data;
+          const type = Object.keys(REPORT_TYPES).find(key =>
+            key.toLowerCase() === String(data.type).toLowerCase() ||
+            REPORT_TYPES[key].en.toLowerCase() === String(data.type).toLowerCase()
+          );
+          const severity = Object.keys(SEVERITY_CONFIG).find(key =>
+            key.toLowerCase() === String(data.severity).toLowerCase()
+          );
+          if (!type || !severity || typeof data.description !== 'string' || !data.description.trim()) {
+            throw new Error('Assistant report summary is missing valid type, severity, or description.');
+          }
+          chatReportDraft = {
+            ready: true,
+            type,
+            severity,
+            description: data.description.trim(),
+            landmark: typeof data.landmark === 'string' ? data.landmark.trim() : ''
+          };
           renderChatReportButton(data);
         }
     } catch (error) {
@@ -60,7 +80,15 @@ function handleChatSend() {
   }).catch(error => {
     hideChatTyping();
     console.error('Assistant response failed:', error);
-    renderChatMessage(lang === 'hi' ? 'माफ़ कीजिए, अभी जवाब नहीं मिल सका। फिर कोशिश करें।' : 'Sorry, I could not get a reply. Please try again.', 'bot');
+    renderChatMessage(
+      lang === 'hi'
+        ? `Gemma से जवाब नहीं मिला। LM Studio server और CORS जाँचें। (${error.message})`
+        : `Could not get a Gemma reply. Check the LM Studio server and CORS. (${error.message})`,
+      'bot'
+    );
+  }).finally(() => {
+    sendBtn.disabled = false;
+    micBtn.disabled = false;
   });
 }
 
@@ -104,12 +132,13 @@ function renderChatMessage(text, sender) {
   bubble.className = `chat-bubble ${sender}`;
 
   // Simple markdown-like formatting
-  let formatted = escapeChatHTML(text)
+  let formatted = text
+    .replace(/\{[\s\S]*?"ready"\s*:\s*true[\s\S]*?\}/g, '')
+    .replace(/```(?:json)?/gi, '')
+    .trim();
+  formatted = escapeChatHTML(formatted)
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\n/g, '<br>');
-
-  // Hide JSON blocks
-  formatted = formatted.replace(/\{[\s\S]*?"ready"\s*:\s*true[\s\S]*?\}/g, '');
 
   bubble.innerHTML = `
     <div class="bubble-content">${formatted}</div>
